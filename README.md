@@ -1,191 +1,201 @@
 # openai-cli
 
-A production-ready OpenAI terminal CLI — streaming, file-aware, and session-persistent.
-Built with Python, Typer, Rich, and the official OpenAI SDK.
+A developer-grade OpenAI terminal CLI built to feel like Claude CLI — interactive by default, streaming, file-aware, and session-persistent.
+
+Built with Python · Typer · Rich · prompt_toolkit · OpenAI SDK
 
 ---
 
 ## Features
 
-| Feature | Details |
+| | |
 |---|---|
-| **Streaming output** | Token-by-token response, just like Claude CLI |
-| **Interactive mode** | Persistent session with conversation memory |
-| **File input** | Pass YAML, code, logs, or text files with `-f` |
-| **Piped input** | `cat logs.txt \| openai "summarize"` |
-| **Smart prompts** | Detects YAML / logs / JSON / code and adjusts system prompt |
-| **Local history** | Saved to `~/.openai/history.json` between sessions |
-| **Model override** | `--model gpt-4-turbo` or any OpenAI model |
-| **Rich UI** | Colored output, spinners, tables, banners |
+| **Interactive by default** | Drops straight into a REPL — no flags needed |
+| **Streaming output** | Tokens print live as they arrive, then re-render as markdown |
+| **Smart system prompts** | Detects YAML / logs / JSON / code and adapts the AI's role |
+| **Session memory** | Conversation history saved to `~/.openai/history.json` |
+| **Input history** | Arrow keys navigate past inputs across sessions |
+| **File input** | Attach any text file with `-f` |
+| **Piped input** | `cat logs.txt | openai` just works |
+| **Hot-swap model** | Change model mid-session with `/model gpt-4-turbo` |
+| **One-shot mode** | `openai "prompt"` for scripting and quick queries |
 
 ---
 
 ## Installation
 
-### 1. Clone & install dependencies
+### One command
 
 ```bash
-git clone https://github.com/yourname/openai-cli
+git clone https://github.com/Win1817/openai-cli.git
 cd openai-cli
+bash install.sh
+```
+
+`install.sh` will:
+
+1. Check for Python 3.10+
+2. Install all dependencies from `requirements.txt`
+3. Prompt you to enter your OpenAI API key *(input is hidden)*
+4. Write the key to `.env` automatically with `chmod 600`
+5. Install a global `openai` command to `~/.local/bin`
+6. Validate the full setup before finishing
+
+> Get your API key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+
+---
+
+### Manual setup (optional)
+
+If you prefer to set things up yourself:
+
+```bash
 pip install -r requirements.txt
-```
 
-### 2. Set your API key
-
-```bash
 cp .env.example .env
-# Edit .env and add your key:
+# Open .env and set:
 # OPENAI_API_KEY=sk-...
-```
 
-Or export directly:
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-### 3. Run it
-
-```bash
-python main.py "Explain Kubernetes ingress"
-```
-
-### 4. Install as a global `openai` command (optional)
-
-```bash
-pip install -e .
-# Now you can run:
-openai "Hello world"
+python main.py
 ```
 
 ---
 
 ## Usage
 
+### Interactive session (default)
+
+```bash
+openai
+```
+
+Just run `openai` with no arguments. You'll land in a full REPL with history, autocomplete, and streaming output.
+
 ### One-shot prompt
 
 ```bash
 openai "Explain Kubernetes ingress"
+openai --no-stream "List 5 Linux performance tips" > tips.txt
 ```
 
 ### Piped input
 
 ```bash
-cat logs.txt | openai "Summarize the errors"
-echo '{"status": "error"}' | openai "What does this mean?"
+cat logs.txt | openai
+cat logs.txt | openai "Focus on 5xx errors"
+echo '{"status": "error", "code": 503}' | openai "What does this mean?"
 ```
 
 ### File input
 
 ```bash
+openai -f deployment.yaml
 openai -f deployment.yaml "What does this deploy?"
-openai -f script.py "Review this for bugs"
-openai -f access.log "What IPs are causing 500 errors?"
+openai -f src/auth.py "Review for security issues"
+openai -f access.log "Which IPs are causing 500 errors?"
 ```
 
-### Interactive mode
+### Resume a previous session
 
 ```bash
-openai -i
-openai --interactive
-```
-
-Interactive session commands:
-
-| Command | Action |
-|---|---|
-| `exit`, `quit`, `:q` | End session |
-| `clear` | Clear conversation history |
-| `history` | Print current session messages |
-| `save` | Save history to disk |
-| `help` | Show help panel |
-
-### Load previous session
-
-```bash
-openai -i --history
+openai --history
 ```
 
 ---
 
-## CLI Options
+## Session commands
+
+Once inside the interactive REPL:
+
+| Command | Description |
+|---|---|
+| `/help` | Show available commands |
+| `/clear` | Clear conversation history for this session |
+| `/history` | Print all messages in the current session |
+| `/save` | Save history to disk now |
+| `/model` | Show current model |
+| `/model gpt-4-turbo` | Switch model mid-session |
+| `/exit` | End the session |
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|---|---|
+| `Enter` | Submit message |
+| `Alt+Enter` | Insert a newline (multiline input) |
+| `↑ / ↓` | Browse input history |
+| `Ctrl+C` | Clear current line (does not exit) |
+
+---
+
+## CLI options
 
 ```
 Usage: openai [OPTIONS] [PROMPT]
 
 Arguments:
-  [PROMPT]  Prompt to send to the model
+  [PROMPT]          One-shot prompt — skips interactive mode
 
 Options:
-  -i, --interactive        Launch interactive chat session
-  -f, --file PATH          Include file content in prompt
-  --no-stream              Disable streaming output
-  --model TEXT             Model to use  [default: gpt-4o]
-  --history                Load previous conversation history
-  --debug                  Enable verbose debug logging
-  --version                Show version and exit
-  --help                   Show this message and exit
+  -f, --file PATH   Attach a file's content to your prompt
+  --no-stream       Disable streaming (useful for piping output)
+  --model TEXT      Model to use  [default: gpt-4o]
+  --history         Resume previous conversation on startup
+  --debug           Verbose debug logging
+  --version         Show version and exit
+  --help            Show this message and exit
 ```
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 openai-cli/
-├── main.py          # CLI entrypoint and command routing
-├── client.py        # OpenAI API wrapper (streaming + blocking)
-├── ui.py            # Rich terminal output, prompts, spinners
-├── memory.py        # Local history persistence (~/.openai/history.json)
+├── install.sh       # One-shot installer: deps + API key + global command
+├── main.py          # CLI entrypoint (Typer), mode routing
+├── repl.py          # Interactive REPL (prompt_toolkit)
+├── client.py        # OpenAI SDK wrapper — streaming + blocking
+├── memory.py        # History persistence (~/.openai/history.json)
 ├── utils.py         # Content detection, prompt building, file reading
 ├── requirements.txt
-├── pyproject.toml   # Package definition for `pip install -e .`
+├── pyproject.toml
 └── .env.example
 ```
 
 ---
 
-## Examples
+## How streaming works
 
-### Summarize error logs
-
-```bash
-tail -100 /var/log/nginx/error.log | openai "What's causing the most errors?"
-```
-
-### Explain infrastructure config
-
-```bash
-openai -f k8s/ingress.yaml "Explain this ingress configuration"
-```
-
-### Code review
-
-```bash
-openai -f src/auth.py "Review this for security issues"
-```
-
-### Non-streaming (e.g. for scripts)
-
-```bash
-openai --no-stream "List 5 Linux performance commands" > tips.txt
-```
-
-### Override model
-
-```bash
-openai --model gpt-4-turbo "Write a haiku about Kubernetes"
-```
+Responses stream token-by-token to the terminal as they arrive, giving the Claude CLI typing effect. Once the full response lands, it's re-rendered as proper markdown — so code blocks, bold text, and lists all display correctly.
 
 ---
 
-## History File
+## Content detection
 
-History is stored at `~/.openai/history.json` and capped at 100 messages.
-Delete it to start fresh:
+When you paste or pipe content, the CLI detects what it is and assigns the right AI persona automatically:
+
+| Content type | AI persona |
+|---|---|
+| YAML / Kubernetes manifests | DevOps / infrastructure engineer |
+| Log files / stack traces | Site reliability engineer |
+| Code | Senior software engineer / code reviewer |
+| JSON | Data engineer / API expert |
+| Everything else | General developer assistant |
+
+---
+
+## History & storage
+
+| Path | Contents |
+|---|---|
+| `~/.openai/history.json` | Conversation messages (capped at 100) |
+| `~/.openai/input_history` | Raw input history for arrow-key navigation |
+
+Clear everything:
 
 ```bash
-rm ~/.openai/history.json
+rm -rf ~/.openai
 ```
 
 ---
@@ -193,4 +203,4 @@ rm ~/.openai/history.json
 ## Requirements
 
 - Python 3.10+
-- OpenAI API key (https://platform.openai.com/api-keys)
+- OpenAI API key — [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
