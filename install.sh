@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# install.sh — One-shot setup for openai-cli
+# Installs dependencies, prompts for API key, writes .env, and registers the `openai` command.
+
+set -euo pipefail
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+GREEN="\033[0;32m"
+CYAN="\033[0;36m"
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+BOLD="\033[1m"
+DIM="\033[2m"
+RESET="\033[0m"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+print_step()  { echo -e "\n${CYAN}${BOLD}==> $1${RESET}"; }
+print_ok()    { echo -e "  ${GREEN}✓${RESET}  $1"; }
+print_warn()  { echo -e "  ${YELLOW}⚠${RESET}   $1"; }
+print_error() { echo -e "  ${RED}✗${RESET}  $1"; }
+print_dim()   { echo -e "  ${DIM}$1${RESET}"; }
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}${BOLD}"
+echo "   ██████╗ ██████╗ ███████╗███╗   ██╗ █████╗ ██╗      ██████╗██╗     ██╗"
+echo "  ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██║     ██╔════╝██║     ██║"
+echo "  ██║   ██║██████╔╝█████╗  ██╔██╗ ██║███████║██║     ██║     ██║     ██║"
+echo "  ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔══██║██║     ██║     ██║     ██║"
+echo "  ╚██████╔╝██║     ███████╗██║ ╚████║██║  ██║███████╗╚██████╗███████╗██║"
+echo "   ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚══════╝╚═╝"
+echo -e "${RESET}"
+echo -e "  ${BOLD}openai-cli installer${RESET}  ${DIM}— interactive OpenAI terminal${RESET}"
+echo ""
+
+# ── Resolve script directory ──────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ── 1. Check Python ───────────────────────────────────────────────────────────
+print_step "Checking Python"
+
+PYTHON=""
+for cmd in python3 python; do
+    if command -v "$cmd" &>/dev/null; then
+        version=$("$cmd" -c "import sys; print(sys.version_info[:2])")
+        major=$("$cmd" -c "import sys; print(sys.version_info[0])")
+        minor=$("$cmd" -c "import sys; print(sys.version_info[1])")
+        if [[ "$major" -ge 3 && "$minor" -ge 10 ]]; then
+            PYTHON="$cmd"
+            break
+        fi
+    fi
+done
+
+if [[ -z "$PYTHON" ]]; then
+    print_error "Python 3.10+ is required but not found."
+    print_dim "Install it from https://python.org/downloads"
+    exit 1
+fi
+
+PY_VERSION=$("$PYTHON" --version 2>&1)
+print_ok "Found $PY_VERSION"
+
+# ── 2. Install dependencies ───────────────────────────────────────────────────
+print_step "Installing dependencies"
+
+if "$PYTHON" -m pip install -r requirements.txt --quiet; then
+    print_ok "All packages installed"
+else
+    print_warn "pip install encountered issues — trying with --break-system-packages"
+    "$PYTHON" -m pip install -r requirements.txt --quiet --break-system-packages
+    print_ok "All packages installed"
+fi
+
+# ── 3. API key ────────────────────────────────────────────────────────────────
+print_step "OpenAI API Key"
+
+ENV_FILE="$SCRIPT_DIR/.env"
+EXISTING_KEY=""
+
+# Load existing key if .env already exists
+if [[ -f "$ENV_FILE" ]]; then
+    EXISTING_KEY=$(grep -E "^OPENAI_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
+fi
+
+if [[ -n "$EXISTING_KEY" ]]; then
+    MASKED="${EXISTING_KEY:0:7}…${EXISTING_KEY: -4}"
+    echo -e "  ${DIM}Found existing key: ${MASKED}${RESET}"
+    echo ""
+    read -r -p "  Keep existing key? [Y/n] " KEEP_KEY
+    KEEP_KEY="${KEEP_KEY:-Y}"
+    if [[ "$KEEP_KEY" =~ ^[Yy]$ ]]; then
+        print_ok "Keeping existing API key"
+        API_KEY="$EXISTING_KEY"
+    else
+        API_KEY=""
+    fi
+fi
+
+if [[ -z "$API_KEY" ]]; then
+    echo ""
+    echo -e "  Get your key at: ${CYAN}https://platform.openai.com/api-keys${RESET}"
+    echo ""
+
+    while true; do
+        # Read without echoing so the key stays hidden
+        read -r -s -p "  Enter your OpenAI API key: " API_KEY
+        echo ""  # newline after hidden input
+
+        if [[ -z "$API_KEY" ]]; then
+            print_warn "Key cannot be empty. Try again."
+            continue
+        fi
+
+        if [[ ! "$API_KEY" =~ ^sk- ]]; then
+            print_warn "Key should start with 'sk-'. Are you sure this is correct?"
+            read -r -p "  Use it anyway? [y/N] " USE_ANYWAY
+            USE_ANYWAY="${USE_ANYWAY:-N}"
+            if [[ ! "$USE_ANYWAY" =~ ^[Yy]$ ]]; then
+                continue
+            fi
+        fi
+
+        break
+    done
+fi
+
+# ── 4. Write .env ─────────────────────────────────────────────────────────────
+print_step "Writing .env"
+
+if [[ -f "$ENV_FILE" ]]; then
+    # Update existing key in-place, or append if missing
+    if grep -qE "^OPENAI_API_KEY=" "$ENV_FILE"; then
+        # Portable in-place sed (works on both Linux and macOS)
+        sed -i.bak "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$API_KEY|" "$ENV_FILE"
+        rm -f "$ENV_FILE.bak"
+    else
+        echo "OPENAI_API_KEY=$API_KEY" >> "$ENV_FILE"
+    fi
+else
+    cat > "$ENV_FILE" << EOF
+# openai-cli configuration
+# Generated by install.sh — do not commit this file.
+OPENAI_API_KEY=$API_KEY
+EOF
+fi
+
+# Lock down permissions
+chmod 600 "$ENV_FILE"
+
+MASKED="${API_KEY:0:7}…${API_KEY: -4}"
+print_ok ".env written  ${DIM}(key: ${MASKED}, permissions: 600)${RESET}"
+
+# ── 5. Register global `openai` command ───────────────────────────────────────
+print_step "Installing global 'openai' command"
+
+INSTALL_GLOBAL=true
+
+# Check if an official openai CLI is already on PATH (from openai package)
+if command -v openai &>/dev/null; then
+    EXISTING_PATH=$(command -v openai)
+    # Only warn if it doesn't point back to us
+    if [[ "$EXISTING_PATH" != *"openai-cli"* ]]; then
+        print_warn "An 'openai' command already exists at: $EXISTING_PATH"
+        echo ""
+        read -r -p "  Overwrite it with this CLI? [y/N] " OVERWRITE
+        OVERWRITE="${OVERWRITE:-N}"
+        if [[ ! "$OVERWRITE" =~ ^[Yy]$ ]]; then
+            print_dim "Skipping global install. Run directly with: python3 main.py"
+            INSTALL_GLOBAL=false
+        fi
+    fi
+fi
+
+if $INSTALL_GLOBAL; then
+    # Determine a writable bin directory on PATH
+    BIN_DIR=""
+    for candidate in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
+        if [[ -d "$candidate" ]] && echo "$PATH" | grep -q "$candidate"; then
+            BIN_DIR="$candidate"
+            break
+        fi
+    done
+
+    # Create ~/.local/bin if nothing else exists
+    if [[ -z "$BIN_DIR" ]]; then
+        BIN_DIR="$HOME/.local/bin"
+        mkdir -p "$BIN_DIR"
+        print_warn "Created $BIN_DIR — you may need to add it to your PATH:"
+        print_dim  "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    fi
+
+    WRAPPER="$BIN_DIR/openai"
+    cat > "$WRAPPER" << WRAPPER_EOF
+#!/usr/bin/env bash
+# Auto-generated by openai-cli/install.sh
+exec "$PYTHON" "$SCRIPT_DIR/main.py" "\$@"
+WRAPPER_EOF
+    chmod +x "$WRAPPER"
+    print_ok "Installed → $WRAPPER"
+fi
+
+# ── 6. Quick validation ───────────────────────────────────────────────────────
+print_step "Validating setup"
+
+"$PYTHON" - << PYEOF
+import sys, os
+sys.path.insert(0, "$SCRIPT_DIR")
+from dotenv import load_dotenv
+load_dotenv("$ENV_FILE")
+key = os.getenv("OPENAI_API_KEY", "")
+if not key:
+    print("  ✗  API key not found in .env")
+    sys.exit(1)
+masked = key[:7] + "…" + key[-4:]
+print(f"  ✓  API key loaded ({masked})")
+
+try:
+    from openai import OpenAI
+    print("  ✓  openai SDK imported")
+except ImportError:
+    print("  ✗  openai SDK not found — run: pip install openai")
+    sys.exit(1)
+
+try:
+    from rich.console import Console
+    from prompt_toolkit import PromptSession
+    print("  ✓  rich + prompt_toolkit imported")
+except ImportError as e:
+    print(f"  ✗  Missing dependency: {e}")
+    sys.exit(1)
+PYEOF
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}${BOLD}  ✓  Installation complete!${RESET}"
+echo ""
+echo -e "  ${BOLD}Start chatting:${RESET}"
+echo ""
+if $INSTALL_GLOBAL; then
+    echo -e "    ${CYAN}openai${RESET}                        ${DIM}# interactive session${RESET}"
+    echo -e "    ${CYAN}openai \"Explain K8s ingress\"${RESET}   ${DIM}# one-shot${RESET}"
+    echo -e "    ${CYAN}cat logs.txt | openai${RESET}          ${DIM}# pipe input${RESET}"
+else
+    echo -e "    ${CYAN}python3 main.py${RESET}                ${DIM}# interactive session${RESET}"
+    echo -e "    ${CYAN}python3 main.py \"Hello\"${RESET}        ${DIM}# one-shot${RESET}"
+fi
+echo ""
+echo -e "  ${DIM}Docs: https://github.com/Win1817/openai-cli${RESET}"
+echo ""
