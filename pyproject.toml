@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "openai-cli"
+version = "1.0.0"
+description = "A developer-grade OpenAI terminal CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "typer[all]>=0.12.0",
+    "rich>=13.7.0",
+    "openai>=1.30.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+openai = "main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
