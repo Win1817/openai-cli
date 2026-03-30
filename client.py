@@ -1,5 +1,6 @@
 """
-client.py — OpenAI API wrapper with streaming support.
+client.py — OpenAI API wrapper.
+Streaming output matches Claude CLI: tokens print live, then markdown is rendered.
 """
 
 import logging
@@ -7,12 +8,12 @@ import os
 from typing import Optional
 
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.markdown import Markdown
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
-# System prompts keyed by content type
 SYSTEM_PROMPTS = {
     "yaml": (
         "You are an expert DevOps and infrastructure engineer. "
@@ -22,56 +23,49 @@ SYSTEM_PROMPTS = {
     "logs": (
         "You are a senior site reliability engineer. "
         "The user is sharing log output. Identify errors, warnings, patterns, and root causes. "
-        "Be direct — lead with the most critical issues first."
+        "Lead with the most critical issues first."
     ),
     "code": (
         "You are a senior software engineer and code reviewer. "
-        "Analyze the provided code thoroughly. Explain what it does, spot bugs, "
-        "suggest refactors, and flag security issues. Be specific and actionable."
+        "Analyze the provided code. Explain what it does, spot bugs, suggest refactors, "
+        "and flag security issues. Be specific and actionable."
     ),
     "json": (
         "You are a data engineer and API expert. "
-        "The user is sharing JSON data. Parse and explain its structure, "
-        "identify anomalies, and answer questions about the data."
+        "The user is sharing JSON data. Explain its structure, identify anomalies, "
+        "and answer questions about it."
     ),
     "default": (
         "You are a helpful, knowledgeable assistant for developers and engineers. "
         "Be concise, accurate, and direct. Prefer examples over abstract explanations. "
-        "Use markdown formatting when it improves readability."
+        "Format responses in markdown when it improves readability."
     ),
 }
 
 
 class OpenAIClient:
-    def __init__(self, model: str = "gpt-4o", ui=None):
+    def __init__(self, model: str = "gpt-4o", console: Optional[Console] = None):
         self.model = model
-        self.ui = ui
+        self.console = console or Console()
         self._client = None
         self._init_client()
 
     def _init_client(self):
-        """Initialize the OpenAI client with API key validation."""
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            if self.ui:
-                self.ui.error(
-                    "OPENAI_API_KEY not found.\n"
-                    "  Set it in [bold].env[/bold] or export it:\n"
-                    "  [dim]export OPENAI_API_KEY=sk-...[/dim]"
-                )
+            self.console.print(
+                "\n[bold red]Error:[/bold red] [red]OPENAI_API_KEY not set.[/red]\n"
+                "  Add it to [bold].env[/bold] or run:\n"
+                "  [dim]export OPENAI_API_KEY=sk-...[/dim]\n"
+            )
             raise SystemExit(1)
 
         try:
             from openai import OpenAI
             self._client = OpenAI(api_key=api_key)
-            logger.debug(f"OpenAI client initialized. Model: {self.model}")
         except ImportError:
-            if self.ui:
-                self.ui.error("openai package not installed. Run: [bold]pip install openai[/bold]")
+            self.console.print("[red]openai package missing. Run: pip install openai[/red]")
             raise SystemExit(1)
-
-    def _get_system_prompt(self, content_hint: str) -> str:
-        return SYSTEM_PROMPTS.get(content_hint, SYSTEM_PROMPTS["default"])
 
     def chat(
         self,
@@ -79,69 +73,77 @@ class OpenAIClient:
         stream: bool = True,
         content_hint: str = "default",
     ) -> Optional[str]:
-        """
-        Send messages to the OpenAI API.
-        Returns the full response text.
-        """
-        system_prompt = self._get_system_prompt(content_hint)
+        system_prompt = SYSTEM_PROMPTS.get(content_hint, SYSTEM_PROMPTS["default"])
         full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-        logger.debug(f"Sending {len(full_messages)} messages to {self.model} (stream={stream})")
 
         try:
             if stream:
-                return self._stream_response(full_messages)
+                return self._stream(full_messages)
             else:
-                return self._blocking_response(full_messages)
-
+                return self._blocking(full_messages)
         except Exception as e:
-            self._handle_api_error(e)
+            self._handle_error(e)
             return None
 
-    def _stream_response(self, messages: list) -> str:
-        """Stream tokens as they arrive and return full response."""
-        collected = []
+    def _stream(self, messages: list) -> str:
+        """
+        Stream tokens exactly like Claude CLI:
+        - Tokens printed raw as they arrive (live typing effect)
+        - After stream ends, re-render the full response as markdown
+        """
+        tokens: list[str] = []
 
-        with self.ui.ai_response_context() as printer:
-            stream = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True,
-            )
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    token = delta.content
-                    collected.append(token)
-                    printer(token)
+        api_stream = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+        )
 
-        return "".join(collected)
+        for chunk in api_stream:
+            delta = chunk.choices[0].delta
+            if delta and delta.content:
+                token = delta.content
+                tokens.append(token)
+                print(token, end="", flush=True)
 
-    def _blocking_response(self, messages: list) -> str:
-        """Get a full response without streaming."""
-        with self.ui.spinner("Thinking..."):
-            response = self._client.chat.completions.create(
+        full_text = "".join(tokens)
+
+        # Clear the raw stream, re-render cleanly as markdown
+        print("\n")
+        self.console.print(Markdown(full_text))
+
+        return full_text
+
+    def _blocking(self, messages: list) -> str:
+        from rich.live import Live
+        from rich.spinner import Spinner
+
+        with Live(Spinner("dots", text="[dim]Thinking…[/dim]"), console=self.console, transient=True):
+            resp = self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 stream=False,
             )
 
-        text = response.choices[0].message.content
-        self.ui.print_ai(text)
+        text = resp.choices[0].message.content
+        self.console.print(Markdown(text))
         return text
 
-    def _handle_api_error(self, error: Exception):
-        """Handle and display API errors gracefully."""
-        from openai import AuthenticationError, RateLimitError, APIConnectionError, APIStatusError
+    def _handle_error(self, error: Exception):
+        try:
+            from openai import AuthenticationError, RateLimitError, APIConnectionError, APIStatusError
+            if isinstance(error, AuthenticationError):
+                msg = "Authentication failed — check your [bold]OPENAI_API_KEY[/bold]."
+            elif isinstance(error, RateLimitError):
+                msg = "Rate limit hit. Please wait a moment and retry."
+            elif isinstance(error, APIConnectionError):
+                msg = "Cannot reach OpenAI API. Check your internet connection."
+            elif isinstance(error, APIStatusError):
+                msg = f"API error {error.status_code}: {error.message}"
+            else:
+                msg = f"{type(error).__name__}: {error}"
+        except ImportError:
+            msg = str(error)
 
-        if isinstance(error, AuthenticationError):
-            self.ui.error("Authentication failed. Check your [bold]OPENAI_API_KEY[/bold].")
-        elif isinstance(error, RateLimitError):
-            self.ui.error("Rate limit exceeded. Please wait before retrying.")
-        elif isinstance(error, APIConnectionError):
-            self.ui.error("Could not connect to OpenAI API. Check your internet connection.")
-        elif isinstance(error, APIStatusError):
-            self.ui.error(f"API error {error.status_code}: {error.message}")
-        else:
-            self.ui.error(f"Unexpected error: {type(error).__name__}: {error}")
-            logger.debug("Full error:", exc_info=True)
+        self.console.print(f"\n[bold red]Error:[/bold red] {msg}\n")
+        logger.debug("API error", exc_info=True)
