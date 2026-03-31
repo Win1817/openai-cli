@@ -78,6 +78,7 @@ print_step "OpenAI API Key"
 
 ENV_FILE="$SCRIPT_DIR/.env"
 EXISTING_KEY=""
+API_KEY=""
 
 # Load existing key if .env already exists
 if [[ -f "$ENV_FILE" ]]; then
